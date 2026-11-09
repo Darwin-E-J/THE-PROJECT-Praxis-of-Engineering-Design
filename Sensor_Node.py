@@ -1,3 +1,8 @@
+"""
+This is the Sensor_Node class which wraps espNOW functionality with reading the sensor data
+"""
+
+
 # This is code written by Gemini for a simple espnow test "ping-pong" sending and receiving test. Mac Addresses
 # are kind of hardcoded, GUI section has correct sensor node mac while the sensor section doesn't have the correct
 # GUI Mac address, its just a place holder.
