@@ -67,7 +67,61 @@ class GasSensor:
         except Exception as err:
             print(f"[!] GasSensor read error: {err}")
             return 0.0, 0.0, 0, False
+
+
+
+# ======================================================================
+# TEST EXECUTION LOOP
+# ======================================================================
+def main():
+    print("\n--- Initializing I2C Bus & Testing First Two Classes ---")
+    i2c = busio.I2C(board.SCL, board.SDA)
+
+    climate = ClimateSensor(i2c)
+    gas = GasSensor(i2c)
+
+    print("\nStarting test read loop (press Ctrl+C to stop)...\n")
+
+    sample_count = 0
+    while True:
+        sample_count += 1
+        print(f"--- Reading #{sample_count} ---")
+
+        # Step 1: Read Climate Sensor
+        temp_f, humidity, climate_ok = climate.read_climate()
+        if climate_ok:
+            print(f"Climate  | Temp: {temp_f} °F | Humidity: {humidity} %RH")
+            calib_temp, calib_rh = temp_f, humidity
+        else:
+            print("Climate  | Reading Failed! Using fallback calibration (68°F, 50%RH)")
+            calib_temp, calib_rh = 68.0, 50.0
+
+        # Step 2: Calibrate & Read Gas Sensor using climate data
+        tvoc, eco2, aqi, gas_ok = gas.calibrate_and_read(calib_temp, calib_rh)
+        if gas_ok:
+            print(f"Gas      | TVOC: {tvoc} ppb | eCO2: {eco2} ppm | AQI: {aqi}")
+        else:
+            print("Gas      | Reading Failed!")
+
+        print("-" * 40)
+        time.sleep(3.0)
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+# class ParticleSensor:
+#     """Interfaces with PMSA003I Optical Particle Counter (0x12)"""
+#     def __init__(self, i2c:busio.I2C, address: int = 0x12):
+#         self.available = False
+#         try:
+#             self.sensor = PM
         
         
-# Format into json
-# Send with espnow manager
+# # Format into json
+# # Send with espnow manager
