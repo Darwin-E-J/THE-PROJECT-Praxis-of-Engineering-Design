@@ -3,4 +3,5 @@ Circuitpython sketch for the sensor node that uses the EspNowManager and Sensor_
 """
 
 # Get sensor data from I2C
-# Use Sensor_Node to format into json string and return
+# Format into json
+# Send with espnow manager
