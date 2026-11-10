@@ -1,6 +1,7 @@
 """
 Circuitpython sketch for the sensor node that uses the EspNowManager and Sensor_Node classes to format and send the data packets
 """
+
 import time
 import json
 import board
@@ -51,8 +52,10 @@ if __name__ == "__main__":
     asyncio.run(main())
 # Get sensor data from I2C
 
+
 class ClimateSensor:
     """Interfaces with SI7021 Temperature & Humidity Sensor (0x40)"""
+
     def __init__(self, i2c: busio.I2C, address: int = 0x40):
         self.available = False
         try:
@@ -75,8 +78,10 @@ class ClimateSensor:
             print(f"[!] Climate Sensor read error: {err}")
             return 0.0, 0.0, False
 
+
 class GasSensor:
     """Interfaces with ENS160 MOX Sensor (0x53)"""
+
     def __init__(self, i2c: busio.I2C, address: int = 0x53):
         self.available = False
         try:
@@ -85,7 +90,7 @@ class GasSensor:
             print(f"[+] Successfully initialized GasSensor (ENS160) at 0x53")
         except Exception as err:
             print(f"[!] Gas Sensor init error: {err}")
-            
+
     def calibrate_and_read(self, temp_f: float, humidity_rh: float) -> tuple[float, float, int, bool]:
         """Passes climate calibration values and returns (TVOC, eCO2, AQI, success_flag)."""
         if not self.available:
@@ -103,7 +108,7 @@ class GasSensor:
         except Exception as err:
             print(f"[!] GasSensor read error: {err}")
             return 0.0, 0.0, 0, False
-        
-        
+
+
 # Format into json
 # Send with espnow manager
