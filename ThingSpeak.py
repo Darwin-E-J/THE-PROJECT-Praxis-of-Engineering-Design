@@ -1,5 +1,10 @@
+"""
+Thingspeak class is just a thingspeak API wrapper for a channel
+"""
+
 import requests
 import json
+
 
 class ThingSpeak:
     # No feilds are provided so do this
@@ -8,9 +13,8 @@ class ThingSpeak:
         self.api_write = wkey
         self.channel_id = cID
 
-
         channel_fields_data = requests.get(f"https://api.thingspeak.com/channels/{self.channel_id}/feeds.json?api_key={self.api_read}&results=2")
-        channel_fields = channel_fields_data.json() # Requests has a builtin json parser!
+        channel_fields = channel_fields_data.json()  # Requests has a builtin json parser!
         self.fields = channel_fields["whatever json key form the api data"]
 
     # Fields are provided so do this
