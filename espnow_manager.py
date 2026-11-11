@@ -79,7 +79,7 @@ class ESPNowManager:
     # Channel hopping constants (pairing)
     MIN_CHANNEL = 1
     MAX_CHANNEL = 11  # Standard 2.4 GHz WiFi channels (1-11 in North America)
-    PAIR_CHANNEL_WAIT_MS = ACK_TIMEOUT_MS * 2  # Dwell 1s (2x ack timeout) per channel while pairing
+    PAIR_CHANNEL_WAIT_MS = ACK_TIMEOUT_MS * 5  # Dwell 1s (2x ack timeout) per channel while pairing
 
     # Magic packets
     PAIR_MESSAGE = {"type": "pair"}  # Sent by the hub so sensor nodes learn its MAC
@@ -446,7 +446,7 @@ class ESPNowManager:
                         print("Warning: Inbox full, dropping oldest message")
                         self._inbox.pop(0)
                     self._inbox.append((mac, data))
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
 
     # -------------------------------------------------------------------------
     # Internal Protocol Helpers: packet framing, acking & routing
