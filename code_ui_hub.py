@@ -9,9 +9,8 @@ from espnow_manager import ESPNowManager
 from UI_Hub import UIHub
 
 # List of sensor node MAC addresses to pair with (strings or bytes)
-SENSOR_MACS = [
-    # "24:6F:28:AB:CD:EF",
-]
+# Supports :, -, or no delimiter seperated values
+SENSOR_MACS = ["28-37-2F-8C-B7-E8"]
 
 wifi_manager = WifiManager()
 espnow_manager = ESPNowManager()

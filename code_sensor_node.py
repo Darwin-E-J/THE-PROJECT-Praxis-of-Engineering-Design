@@ -110,7 +110,6 @@ class GasSensor:
             return 0.0, 0.0, 0, False
 
 
-<<<<<<< HEAD
 
 # ======================================================================
 # TEST EXECUTION LOOP
@@ -167,7 +166,3 @@ if __name__ == "__main__":
         
 # # Format into json
 # # Send with espnow manager
-=======
-# Format into json
-# Send with espnow manager
->>>>>>> 5fac956ca669640958bc7a6e8909a998dd19e052
