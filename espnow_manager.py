@@ -79,7 +79,8 @@ class ESPNowManager:
     # Channel hopping constants (pairing)
     MIN_CHANNEL = 1
     MAX_CHANNEL = 11  # Standard 2.4 GHz WiFi channels (1-11 in North America)
-    PAIR_CHANNEL_WAIT_MS = ACK_TIMEOUT_MS * 5  # Dwell 1s (2x ack timeout) per channel while pairing
+    PAIR_CHANNEL_WAIT_MS = ACK_TIMEOUT_MS * 2  # Dwell 1s (2x ack timeout) per channel while pairing
+    PAIR_TIMEOUT_MS = 3e4  # Full channel sweep + margin (30s)
 
     # Magic packets
     PAIR_MESSAGE = {"type": "pair"}  # Sent by the hub so sensor nodes learn its MAC
@@ -245,39 +246,80 @@ class ESPNowManager:
         except Exception as e:
             print(f"Error: Failed to remove peer: {e}")
 
-    async def init_hub(self, sensor_macs: list) -> list:
+    async def init_hub(self, sensor_macs: list, timeout_ms: int | None = None) -> list:
         """
         Set up this device as the UI hub and pair with every sensor node.
 
         Starts ESP-NOW and the background receive task, adds each sensor as a
-        peer, then sends each one the special PAIR_MESSAGE. When a sensor node
-        gets the pair message it learns our MAC and pairs with us
-        (see init_sensor_node()).
+        peer, then repeatedly sends PAIR_MESSAGE to all unpaired sensors every
+        ACK_TIMEOUT_MS until every sensor acks or timeout_ms elapses (default:
+        PAIR_TIMEOUT_MS, long enough for a full sensor channel sweep).
 
         A unicast pair message is used instead of a broadcast because it is
         acked, confirming which sensors actually paired.
 
         Note: ESP-NOW only works if both devices are on the same WiFi channel.
-        The hub's channel is set by the router it is connected to.
+        The hub's channel is set by the router it is connected to, while
+        sensor nodes hop channels until they find it (see init_sensor_node()).
 
         Args:
             sensor_macs: Sensor node MAC addresses (strings or bytes, e.g. from ThingSpeak)
+            timeout_ms: Max time to keep trying to pair in ms (default: PAIR_TIMEOUT_MS)
 
         Returns:
             list: MAC addresses (bytes) of the sensors that acked the pair message
         """
         self.start()
 
-        paired = []
+        timeout = self.PAIR_TIMEOUT_MS if timeout_ms is None else timeout_ms
+
+        # Deduplicate MACs while preserving order and assign one packet ID per sensor
+        pending = {}  # mac_bytes -> (packet_id, encoded_pair_bytes)
         for mac in sensor_macs:
             mac_bytes = self.mac_to_bytes(mac)
+            if mac_bytes in pending:
+                continue
             self.add_peer(mac_bytes)
-            if await self.send_message(mac_bytes, self.PAIR_MESSAGE):
-                paired.append(mac_bytes)
-            else:
-                print(f"Warning: Sensor {self.mac_to_str(mac_bytes)} did not pair")
+            if mac_bytes not in self._peers:
+                continue
+            packet_id = self._packet_number
+            packet = self._add_packet_id(self.PAIR_MESSAGE)
+            self._packet_number += 1
+            pending[mac_bytes] = (packet_id, json.dumps(packet).encode("utf-8"))
 
-        print(f"Hub paired with {len(paired)}/{len(sensor_macs)} sensors")
+        total_sensors = len(pending)
+        paired = []
+        start = adafruit_ticks.ticks_ms()
+
+        if pending:
+            print(f"Pairing with {total_sensors} sensor(s) (timeout: {timeout} ms)...")
+
+        while pending and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) < timeout:
+            # Send/resend PAIR_MESSAGE to every unpaired sensor so none miss their channel window
+            for mac_bytes, (_, data) in pending.items():
+                try:
+                    self._espnow.send(data, self._peers[mac_bytes])
+                except Exception as e:
+                    print(f"Error: Failed to send pair message to {self.mac_to_str(mac_bytes)}: {e}")
+
+            round_start = adafruit_ticks.ticks_ms()
+            while pending and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), round_start) < self.ACK_TIMEOUT_MS:
+                for mac_bytes in list(pending):
+                    packet_id, _ = pending[mac_bytes]
+                    if packet_id in self._acked_packets:
+                        self._acked_packets.remove(packet_id)
+                        del pending[mac_bytes]
+                        paired.append(mac_bytes)
+                        print(f"Paired with sensor {self.mac_to_str(mac_bytes)}")
+
+                if not pending or adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) >= timeout:
+                    break
+                await asyncio.sleep(0.01)  # Let receive_messages() run
+
+        for mac_bytes in pending:
+            print(f"Warning: Sensor {self.mac_to_str(mac_bytes)} did not pair (timed out)")
+
+        print(f"Hub paired with {len(paired)}/{total_sensors} sensors")
         return paired
 
     def _set_channel(self, channel: int) -> bool:
@@ -326,7 +368,7 @@ class ESPNowManager:
                 print(f"Listening for pair message on channel {channel}...")
             start = adafruit_ticks.ticks_ms()
             while self._hub_mac is None and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) < self.PAIR_CHANNEL_WAIT_MS:
-                await asyncio.sleep(0.1)  # Let receive_messages() run
+                await asyncio.sleep(0.01)  # Let receive_messages() run
 
             channel = self.MIN_CHANNEL if channel >= self.MAX_CHANNEL else channel + 1
 
