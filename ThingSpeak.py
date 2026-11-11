@@ -68,6 +68,19 @@ class ThingSpeak:
             response.raise_for_status()
             return response.json()
     
+    """   
+    The next few functions each focus on implementing different types of reading.
+    You have three options when reading data:
+        --> Reading a channel feed :    This gives you a comprehensive list of all the information
+                                        stored across all channels. This gives you information on
+                                        which fields were written to and at what time.
+        --> Reading a channel field:    This gives you a list of all the information written to one
+                                        specific field. Some areas will appear as null, this comes from
+                                        when a channel does not push information at the same time that other
+                                        fields do.
+        --> Reading Status Updates:         
+    """
+
     def read_channel_feed(self, results=None, minutes=None,
                           start=None, end=None):
 
@@ -171,6 +184,72 @@ class ThingSpeak:
             "channel": channel,
             "feeds": feeds
         }
+########################
+    def _write_request(self, params):
+        url = f"{self.BASE_URL}/update"
 
-    def write_field(self, field, data):
-        pass
+        with requests.post(url, data=params) as response:
+            response.raise_for_status()
+
+            result = response.text.strip()
+
+            if not result.isdigit():
+                raise ValueError(f"Unexpected ThingSpeak response: {result}")
+
+            return int(result)
+
+    def write_fields(self, data):
+
+        if not isinstance(data, dict):
+            raise TypeError("data must be a dictionary")
+
+        if not data:
+            raise ValueError("At least one field is required")
+
+        params = {
+            "api_key": self.api_write
+        }
+
+        for field, value in data.items():
+
+            if field not in self.fields:
+                raise ValueError(f"Invalid field: {field}")
+
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise TypeError(f"Invalid value for {field}")
+
+            params[field] = value
+
+        return self._write_request(params)
+
+    def write_status(self, status):
+
+        if not isinstance(status, str):
+            raise TypeError("Status must be a string")
+
+        if len(status) > 255:
+            raise ValueError("Status cannot exceed 255 characters")
+
+        params = {
+            "api_key": self.api_write,
+            "status": status
+        }
+
+        return self._write_request(params)
+
+    def write_MAC_ADDRESS(self, addresses):
+
+        if not addresses:
+            raise ValueError("Please enter MAC address")
+
+        if isinstance(addresses, (list, tuple)):
+            raise TypeError("Invalid format, pass MAC addresses as a list or tuple")
+
+        params = {
+            "api_key": self.api_write
+        }
+
+        for mac_ad in addresses:
+            params["field1"] = mac_ad
+
+        return self._write_request(params=params)
