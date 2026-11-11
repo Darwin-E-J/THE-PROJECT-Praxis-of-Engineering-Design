@@ -1,0 +1,2 @@
+CIRCUITPY_WIFI_SSID = "bucknell_iot"
+CIRCUITPY_WIFI_PASSWORD = ""

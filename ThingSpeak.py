@@ -10,8 +10,6 @@ class ThingSpeak:
         self.api_write = wkey
         self.channel_id = cID
 
-        self.
-
         self.BASE_URL = "https://api.thingspeak.com"
 
         channel_fields_data = requests.get(f"{self.BASE_URL}/channels/{self.channel_id}/feeds.json?api_key={self.api_read}&results=2")
