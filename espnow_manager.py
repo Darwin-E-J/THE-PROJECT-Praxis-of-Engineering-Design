@@ -27,13 +27,13 @@ class ESPNowManager:
     MAX_CHANNEL = 11
     PAIR_CHANNEL_WAIT_MS = 1200
     PAIR_SEND_INTERVAL_MS = 100
-    PAIR_TX_STATUS_WAIT_MS = 30
     PAIR_TIMEOUT_SEC = 30
 
     PAIR_MESSAGE = {"type": "pair"}
+    SUCCESSFUL_PAIR_MESSAGE = {"type": "successful_pair"}
     REQUEST_MESSAGE = {"type": "request"}
 
-    MESSAGE_TYPES = [PAIR_MESSAGE, REQUEST_MESSAGE]
+    MESSAGE_TYPES = [PAIR_MESSAGE, SUCCESSFUL_PAIR_MESSAGE, REQUEST_MESSAGE]
     message_types = MESSAGE_TYPES
     MAX_INBOX = 20
 
@@ -42,12 +42,14 @@ class ESPNowManager:
         self._packet_number = 0
         self._expected_packet = {}
         self._acked_packets = set()
+        self._paired_sensors = set()
         self._inbox = []
         self._auto_add_peers = False
         self._hub_mac = None
         self._receive_task = None
         self._peers = {}
         self._channel = None
+        self._sending_pair_success = False
 
     @property
     def hub_mac(self):
@@ -112,44 +114,13 @@ class ESPNowManager:
         except Exception as e:
             print(f"[!] Failed to remove peer: {e}")
 
-    async def _send_pair_probe(self, mac_bytes: bytes, packet_id: int, data: bytes) -> bool:
-        """Send one PAIR_MESSAGE and return True on 802.11 MAC ACK or JSON ACK."""
-        has_tx_counters = hasattr(self._espnow, "send_success") and hasattr(self._espnow, "send_failure")
-        prev_ok = self._espnow.send_success if has_tx_counters else 0
-        prev_fail = self._espnow.send_failure if has_tx_counters else 0
-
-        try:
-            self._espnow.send(data, self._peers[mac_bytes])
-        except Exception as e:
-            print(f"[!] Pair send error to {self.mac_to_str(mac_bytes)}: {e}")
-            return False
-
-        if packet_id in self._acked_packets:
-            self._acked_packets.remove(packet_id)
-            return True
-
-        if not has_tx_counters:
-            return False
-
-        wait_start = adafruit_ticks.ticks_ms()
-        while adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), wait_start) < self.PAIR_TX_STATUS_WAIT_MS:
-            if self._espnow.send_success > prev_ok:
-                return True
-            if packet_id in self._acked_packets:
-                self._acked_packets.remove(packet_id)
-                return True
-            if self._espnow.send_failure > prev_fail:
-                return False
-            await asyncio.sleep(0.005)
-
-        return False
-
     async def init_hub(self, sensor_macs: list, timeout_sec: int = PAIR_TIMEOUT_SEC) -> list:
         """
         Continuously sends pair messages to all unpaired sensors until every
-        expected sensor acknowledges (MAC ACK or JSON ACK) or timeout_sec expires.
+        expected sensor sends SUCCESSFUL_PAIR_MESSAGE or timeout_sec expires.
         """
         self.start()
+        self._paired_sensors.clear()
         channel = wifi.radio.ap_info.channel if wifi.radio.ap_info is not None else self._channel
 
         pending = {}  # mac_bytes -> (packet_id, encoded_pair_bytes)
@@ -174,21 +145,18 @@ class ESPNowManager:
         print(f"[*] Hub discovery active on Wi-Fi Channel {ch_label} (timeout: {timeout_sec}s)...")
 
         while pending and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start_time) < timeout_ms:
-            for mac_bytes in list(pending):
-                packet_id, data = pending[mac_bytes]
-                if await self._send_pair_probe(mac_bytes, packet_id, data):
-                    del pending[mac_bytes]
-                    paired.append(mac_bytes)
-                    print(f"[✓] Successfully paired with {self.mac_to_str(mac_bytes)}")
-                if adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start_time) >= timeout_ms:
-                    break
+            for mac_bytes, (_, data) in pending.items():
+                try:
+                    self._espnow.send(data, self._peers[mac_bytes])
+                except Exception as e:
+                    print(f"[!] Pair send error to {self.mac_to_str(mac_bytes)}: {e}")
 
             round_start = adafruit_ticks.ticks_ms()
             while pending and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), round_start) < self.PAIR_SEND_INTERVAL_MS:
                 for mac_bytes in list(pending):
                     packet_id, _ = pending[mac_bytes]
-                    if packet_id in self._acked_packets:
-                        self._acked_packets.remove(packet_id)
+                    if mac_bytes in self._paired_sensors:
+                        self._acked_packets.discard(packet_id)
                         del pending[mac_bytes]
                         paired.append(mac_bytes)
                         print(f"[✓] Successfully paired with {self.mac_to_str(mac_bytes)}")
@@ -226,6 +194,17 @@ class ESPNowManager:
                     if len(self._inbox) >= self.MAX_INBOX:
                         self._inbox.pop(0)
                     self._inbox.append((mac, data))
+
+    async def _send_successful_pair(self, mac_bytes: bytes) -> bool:
+        if self._sending_pair_success:
+            return False
+        self._sending_pair_success = True
+        try:
+            payload = dict(self.SUCCESSFUL_PAIR_MESSAGE)
+            payload["mac"] = self.mac_to_str(wifi.radio.mac_address)
+            return await self.send_message(mac_bytes, payload)
+        finally:
+            self._sending_pair_success = False
 
     async def init_sensor_node(self) -> bytes:
         self._auto_add_peers = True
@@ -267,7 +246,11 @@ class ESPNowManager:
 
             channel = self.MIN_CHANNEL if channel >= self.MAX_CHANNEL else channel + 1
 
-        print(f"[✓] Paired with Hub {self.mac_to_str(self._hub_mac)} on channel {self._channel}")
+        print(f"[*] Found Hub {self.mac_to_str(self._hub_mac)} on channel {self._channel}, sending pairing complete...")
+        if await self._send_successful_pair(self._hub_mac):
+            print(f"[✓] Paired with Hub {self.mac_to_str(self._hub_mac)} on channel {self._channel}")
+        else:
+            print(f"[!] Hub {self.mac_to_str(self._hub_mac)} did not ACK pairing complete")
         return self._hub_mac
 
     async def send_message(self, mac: str | bytes, message: dict) -> bool:
@@ -366,6 +349,8 @@ class ESPNowManager:
             elif mac in self._peers:
                 self._send_ack(mac, packet_id)
                 self._expected_packet[mac] = packet_id + 1
+                if not self._sending_pair_success:
+                    asyncio.create_task(self._send_successful_pair(mac))
                 return None
             else:
                 return None
@@ -382,4 +367,17 @@ class ESPNowManager:
                 return None
 
         self._expected_packet[mac] = packet_id + 1
+
+        if self.is_message_type(data, self.SUCCESSFUL_PAIR_MESSAGE):
+            sensor_mac = mac
+            if "mac" in data:
+                try:
+                    payload_mac = self.mac_to_bytes(data["mac"])
+                    if payload_mac == mac:
+                        sensor_mac = payload_mac
+                except Exception:
+                    pass
+            self._paired_sensors.add(sensor_mac)
+            return None
+
         return data
