@@ -132,7 +132,7 @@ class ESPNowManager:
                 if mac_bytes not in paired:
                     if await self.send_message(mac_bytes, self.PAIR_MESSAGE):
                         paired.append(mac_bytes)
-                        print(f"[✓] Successfully paired with {self.mac_to_str(mac_bytes)}")
+                        print(f"Successfully paired with {self.mac_to_str(mac_bytes)}")
 
             await asyncio.sleep(0.2)
 
@@ -151,7 +151,7 @@ class ESPNowManager:
         while self._hub_mac is None:
             await asyncio.sleep(0.05)
 
-        print(f"[✓] Paired with Hub {self.mac_to_str(self._hub_mac)}")
+        print(f"Paired with Hub {self.mac_to_str(self._hub_mac)}")
         return self._hub_mac
 
     async def send_message(self, mac: str | bytes, message: dict) -> bool:
