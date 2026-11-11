@@ -27,6 +27,7 @@ class ESPNowManager:
     MAX_CHANNEL = 11
     PAIR_CHANNEL_WAIT_MS = 1200
     PAIR_SEND_INTERVAL_MS = 100
+    PAIR_TX_STATUS_WAIT_MS = 30
     PAIR_TIMEOUT_SEC = 30
 
     PAIR_MESSAGE = {"type": "pair"}
@@ -111,10 +112,42 @@ class ESPNowManager:
         except Exception as e:
             print(f"[!] Failed to remove peer: {e}")
 
+    async def _send_pair_probe(self, mac_bytes: bytes, packet_id: int, data: bytes) -> bool:
+        """Send one PAIR_MESSAGE and return True on 802.11 MAC ACK or JSON ACK."""
+        has_tx_counters = hasattr(self._espnow, "send_success") and hasattr(self._espnow, "send_failure")
+        prev_ok = self._espnow.send_success if has_tx_counters else 0
+        prev_fail = self._espnow.send_failure if has_tx_counters else 0
+
+        try:
+            self._espnow.send(data, self._peers[mac_bytes])
+        except Exception as e:
+            print(f"[!] Pair send error to {self.mac_to_str(mac_bytes)}: {e}")
+            return False
+
+        if packet_id in self._acked_packets:
+            self._acked_packets.remove(packet_id)
+            return True
+
+        if not has_tx_counters:
+            return False
+
+        wait_start = adafruit_ticks.ticks_ms()
+        while adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), wait_start) < self.PAIR_TX_STATUS_WAIT_MS:
+            if self._espnow.send_success > prev_ok:
+                return True
+            if packet_id in self._acked_packets:
+                self._acked_packets.remove(packet_id)
+                return True
+            if self._espnow.send_failure > prev_fail:
+                return False
+            await asyncio.sleep(0.005)
+
+        return False
+
     async def init_hub(self, sensor_macs: list, timeout_sec: int = PAIR_TIMEOUT_SEC) -> list:
         """
         Continuously sends pair messages to all unpaired sensors until every
-        expected sensor acknowledges or the master timeout (timeout_sec) expires.
+        expected sensor acknowledges (MAC ACK or JSON ACK) or timeout_sec expires.
         """
         self.start()
         channel = wifi.radio.ap_info.channel if wifi.radio.ap_info is not None else self._channel
@@ -141,11 +174,14 @@ class ESPNowManager:
         print(f"[*] Hub discovery active on Wi-Fi Channel {ch_label} (timeout: {timeout_sec}s)...")
 
         while pending and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start_time) < timeout_ms:
-            for mac_bytes, (_, data) in pending.items():
-                try:
-                    self._espnow.send(data, self._peers[mac_bytes])
-                except Exception as e:
-                    print(f"[!] Pair send error to {self.mac_to_str(mac_bytes)}: {e}")
+            for mac_bytes in list(pending):
+                packet_id, data = pending[mac_bytes]
+                if await self._send_pair_probe(mac_bytes, packet_id, data):
+                    del pending[mac_bytes]
+                    paired.append(mac_bytes)
+                    print(f"[✓] Successfully paired with {self.mac_to_str(mac_bytes)}")
+                if adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start_time) >= timeout_ms:
+                    break
 
             round_start = adafruit_ticks.ticks_ms()
             while pending and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), round_start) < self.PAIR_SEND_INTERVAL_MS:
