@@ -76,6 +76,11 @@ class ESPNowManager:
     ACK_TIMEOUT_MS = 500  # How long to wait for an ack before resending
     MAX_RETRIES = 5  # How many times to resend a packet before giving up
 
+    # Channel hopping constants (pairing)
+    MIN_CHANNEL = 1
+    MAX_CHANNEL = 11  # Standard 2.4 GHz WiFi channels (1-11 in North America)
+    PAIR_CHANNEL_WAIT_MS = ACK_TIMEOUT_MS * 2  # Dwell 1s (2x ack timeout) per channel while pairing
+
     # Magic packets
     PAIR_MESSAGE = {"type": "pair"}  # Sent by the hub so sensor nodes learn its MAC
     REQUEST_MESSAGE = {"type": "request"}  # Sent by the hub to request sensor readings
@@ -275,17 +280,38 @@ class ESPNowManager:
         print(f"Hub paired with {len(paired)}/{len(sensor_macs)} sensors")
         return paired
 
+    def _set_channel(self, channel: int) -> bool:
+        """
+        Set the WiFi radio channel for ESP-NOW via a brief AP start/stop.
+
+        CircuitPython's wifi.radio does not expose a direct writable channel
+        property, so starting and immediately stopping an AP tunes the radio
+        to the requested channel.
+
+        Args:
+            channel: 2.4 GHz WiFi channel number (typically 1-11)
+
+        Returns:
+            bool: True if the channel was set, False otherwise
+        """
+        try:
+            wifi.radio.start_ap(" ", "", channel=channel, max_connections=0)
+            wifi.radio.stop_ap()
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to set channel {channel}: {e}")
+            return False
+
     async def init_sensor_node(self) -> bytes:
         """
         Set up this device as a sensor node and wait for the hub to pair.
 
-        Starts ESP-NOW and the background receive task, then waits until the
-        hub sends the special PAIR_MESSAGE. Once received, the hub's MAC is
-        added as a peer, saved in self._hub_mac, and acked.
-
-        Note: ESP-NOW only works if both devices are on the same WiFi channel.
-        If the hub's router is on a different channel than this node, the pair
-        message will never arrive (this is where channel hopping would go).
+        Starts ESP-NOW and the background receive task, then hops sequentially
+        through WiFi channels (MIN_CHANNEL..MAX_CHANNEL), dwelling
+        PAIR_CHANNEL_WAIT_MS (double ACK_TIMEOUT_MS, i.e. 1 s) on each channel
+        until the hub sends the special PAIR_MESSAGE. Once received, the hub's
+        MAC is added as a peer, saved in self._hub_mac, and acked, keeping the
+        radio on the hub's channel.
 
         Returns:
             bytes: The hub's MAC address
@@ -294,8 +320,15 @@ class ESPNowManager:
         self._auto_add_peers = True
 
         print("Waiting for hub pair message...")
+        channel = self.MIN_CHANNEL
         while self._hub_mac is None:
-            await asyncio.sleep(0.1)  # Let receive_messages() run
+            if self._set_channel(channel):
+                print(f"Listening for pair message on channel {channel}...")
+            start = adafruit_ticks.ticks_ms()
+            while self._hub_mac is None and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) < self.PAIR_CHANNEL_WAIT_MS:
+                await asyncio.sleep(0.1)  # Let receive_messages() run
+
+            channel = self.MIN_CHANNEL if channel >= self.MAX_CHANNEL else channel + 1
 
         return self._hub_mac
 
