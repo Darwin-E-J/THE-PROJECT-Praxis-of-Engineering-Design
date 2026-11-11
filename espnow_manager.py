@@ -87,17 +87,10 @@ class ESPNowManager:
             self._espnow = None
             print("[-] ESP-NOW stopped")
 
-    def add_peer(self, mac, channel=None):
+    def add_peer(self, mac, channel=0):
         mac_bytes = self.mac_to_bytes(mac)
         if mac_bytes in self._peers:
             return
-        if channel is None:
-            if wifi.radio.ap_info is not None:
-                channel = wifi.radio.ap_info.channel
-            elif self._channel is not None:
-                channel = self._channel
-            else:
-                channel = 0
         try:
             peer = espnow.Peer(mac=mac_bytes, channel=channel)
             self._espnow.peers.append(peer)
@@ -131,7 +124,7 @@ class ESPNowManager:
             mac_bytes = self.mac_to_bytes(mac)
             if mac_bytes in pending:
                 continue
-            self.add_peer(mac_bytes, channel=channel)
+            self.add_peer(mac_bytes)
             if mac_bytes not in self._peers:
                 continue
             packet_id = self._packet_number
@@ -183,6 +176,21 @@ class ESPNowManager:
             print(f"[!] Failed to set channel {channel}: {e}")
             return False
 
+    def _drain_rx(self) -> None:
+        if self._espnow is None:
+            return
+        while self._espnow:
+            packet = self._espnow.read()
+            if packet:
+                mac = packet.mac
+                msg = packet.msg
+                data = self._handle_packet(mac, msg)
+
+                if data is not None:
+                    if len(self._inbox) >= self.MAX_INBOX:
+                        self._inbox.pop(0)
+                    self._inbox.append((mac, data))
+
     async def init_sensor_node(self) -> bytes:
         self._auto_add_peers = True
         if not wifi.radio.enabled:
@@ -200,9 +208,9 @@ class ESPNowManager:
                     print(f"[!] ESPNow deinit warning: {e}")
                 self._espnow = None
 
-            self._set_channel(channel)
+            if self._set_channel(channel):
+                self._channel = channel
             self._espnow = espnow.ESPNow()
-            self._channel = channel
 
             if self._receive_task is None:
                 self._receive_task = asyncio.create_task(self.receive_messages())
@@ -214,6 +222,12 @@ class ESPNowManager:
                 and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) < self.PAIR_CHANNEL_WAIT_MS
             ):
                 await asyncio.sleep(0.01)
+
+            # Drain any late-arriving pair packet before hopping away from this channel.
+            if self._hub_mac is None:
+                self._drain_rx()
+            if self._hub_mac is not None:
+                break
 
             channel = self.MIN_CHANNEL if channel >= self.MAX_CHANNEL else channel + 1
 
@@ -263,18 +277,7 @@ class ESPNowManager:
     async def receive_messages(self):
         """Continuously reads incoming packets with low latency (10ms poll rate)."""
         while True:
-            if self._espnow is not None:
-                while self._espnow:
-                    packet = self._espnow.read()
-                    if packet:
-                        mac = packet.mac
-                        msg = packet.msg
-                        data = self._handle_packet(mac, msg)
-
-                        if data is not None:
-                            if len(self._inbox) >= self.MAX_INBOX:
-                                self._inbox.pop(0)
-                            self._inbox.append((mac, data))
+            self._drain_rx()
             # Reduced sleep interval to fix ACK timeout lag
             await asyncio.sleep(0.01)
 
@@ -317,7 +320,7 @@ class ESPNowManager:
 
         if self.is_message_type(data, self.PAIR_MESSAGE):
             if self._auto_add_peers and self._hub_mac is None:
-                self.add_peer(mac, channel=self._channel)
+                self.add_peer(mac)
                 if mac in self._peers:
                     self._hub_mac = mac
                     self._auto_add_peers = False
