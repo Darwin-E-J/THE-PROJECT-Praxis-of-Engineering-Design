@@ -1,5 +1,6 @@
 """
-ESP-NOW Manager with fixes for channel alignment and pairing timeouts.
+ESP-NOW Manager with low-latency polling, channel-tuning fixes,
+and continuous hub-sensor pairing routines for CircuitPython 9.x.
 """
 
 import json
@@ -95,11 +96,20 @@ class ESPNowManager:
         except Exception as e:
             print(f"[!] Failed to add peer: {e}")
 
+    def remove_peer(self, mac):
+        mac_bytes = self.mac_to_bytes(mac)
+        if mac_bytes not in self._peers:
+            return
+        try:
+            peer = self._peers[mac_bytes]
+            self._espnow.peers.remove(peer)
+            del self._peers[mac_bytes]
+            print(f"[-] Peer {self.mac_to_str(mac_bytes)} removed")
+        except Exception as e:
+            print(f"[!] Failed to remove peer: {e}")
+
     async def init_hub(self, sensor_macs: list, timeout_sec: int = 15) -> list:
-        """
-        Continuously broadcasts pair messages across a specified duration
-        to allow channel-hopping nodes time to align channels.
-        """
+        """Continuously attempts pairing across configured sensor MACs until acknowledged."""
         self.start()
         paired = []
         target_macs = [self.mac_to_bytes(m) for m in sensor_macs]
@@ -110,7 +120,7 @@ class ESPNowManager:
         start_time = adafruit_ticks.ticks_ms()
         timeout_ms = timeout_sec * 1000
 
-        print(f"[*] Hub discovery active on Wi-Fi Channel {wifi.radio.channel}...")
+        print("[*] Hub discovery active...")
 
         while len(paired) < len(target_macs):
             if adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start_time) > timeout_ms:
@@ -118,7 +128,6 @@ class ESPNowManager:
 
             for mac_bytes in target_macs:
                 if mac_bytes not in paired:
-                    # Attempt pair send with reduced retry count per loop iteration
                     if await self.send_message(mac_bytes, self.PAIR_MESSAGE):
                         paired.append(mac_bytes)
                         print(f"[✓] Successfully paired with {self.mac_to_str(mac_bytes)}")
@@ -128,6 +137,7 @@ class ESPNowManager:
         return paired
 
     def _set_channel(self, channel: int) -> bool:
+        """Safely tunes the physical radio channel via AP start/stop cycle."""
         try:
             wifi.radio.start_ap(" ", "", channel=channel, max_connections=0)
             wifi.radio.stop_ap()
@@ -136,17 +146,17 @@ class ESPNowManager:
             return False
 
     async def init_sensor_node(self) -> bytes:
+        """Hops Wi-Fi channels until receiving a valid PAIR_MESSAGE from the UI Hub."""
         self.start()
         self._auto_add_peers = True
 
-        print(f"[*] Listening for Hub pair message on active channel ({wifi.radio.channel})...")
+        print("[*] Listening for Hub pair message...")
         channel = self.MIN_CHANNEL
 
         while self._hub_mac is None:
-            # Hop channels only if pairing is taking too long
             self._set_channel(channel)
             start = adafruit_ticks.ticks_ms()
-            
+
             while self._hub_mac is None and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) < self.PAIR_CHANNEL_WAIT_MS:
                 await asyncio.sleep(0.01)
 
@@ -195,7 +205,7 @@ class ESPNowManager:
             await asyncio.sleep(0.01)
 
     async def receive_messages(self):
-        """Continuously reads incoming packets with low latency (10ms poll rate)."""
+        """Processes incoming frames with 10ms low-latency polling."""
         while True:
             if self._espnow:
                 packet = self._espnow.read()
@@ -208,7 +218,6 @@ class ESPNowManager:
                         if len(self._inbox) >= self.MAX_INBOX:
                             self._inbox.pop(0)
                         self._inbox.append((mac, data))
-            # Reduced sleep interval to fix ACK timeout lag
             await asyncio.sleep(0.01)
 
     def _add_packet_id(self, message: dict) -> dict:
