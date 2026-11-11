@@ -24,35 +24,6 @@ myRTC = rtc.RTC()
 # TODO: Sync sensor node RTC with hub over espNOW?
 
 
-async def main():
-    # Set up as sensor node and wait for hub pair message
-    print("Waiting to pair with hub...")
-    hub_mac = await espnow_manager.init_sensor_node()
-    print(f"Paired with hub: {espnow_manager.mac_to_str(hub_mac)}")
-
-    while True:
-        # Check for incoming messages from the hub
-        message = await espnow_manager.read_message(hub_mac, timeout_ms=100)
-        if message:
-            sender_mac, data = message
-            print(f"Received from hub: {data}")
-
-            if espnow_manager.is_message_type(data, espnow_manager.REQUEST_MESSAGE):
-                # Placeholder sensor data packet (to be populated by Sensor_Node class)
-                sensor_data = {
-                    # e.g., "temp": ..., "humidity": ...
-                }
-                print("Sending sensor data to hub...")
-                await espnow_manager.send_message(hub_mac, sensor_data)
-
-        await asyncio.sleep(0.1)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-# Get sensor data from I2C
-
-
 class ClimateSensor:
     """Interfaces with SI7021 Temperature & Humidity Sensor (0x40)"""
 
@@ -110,50 +81,55 @@ class GasSensor:
             return 0.0, 0.0, 0, False
 
 
+def _read_sensor_payload(climate: ClimateSensor | None, gas: GasSensor | None) -> dict:
+    """Read available sensors and return a compact JSON-serializable payload."""
+    temp_f, humidity, climate_ok = climate.read_climate() if climate else (0.0, 0.0, False)
+    calib_temp, calib_rh = (temp_f, humidity) if climate_ok else (68.0, 50.0)
+    tvoc, eco2, aqi, gas_ok = gas.calibrate_and_read(calib_temp, calib_rh) if gas else (0.0, 0.0, 0, False)
 
-# ======================================================================
-# TEST EXECUTION LOOP
-# ======================================================================
-def main():
-    print("\n--- Initializing I2C Bus & Testing First Two Classes ---")
-    i2c = busio.I2C(board.SCL, board.SDA)
+    return {
+        "type": "data",
+        "temp_f": temp_f if climate_ok else None,
+        "humidity": humidity if climate_ok else None,
+        "tvoc": tvoc if gas_ok else None,
+        "eco2": eco2 if gas_ok else None,
+        "aqi": aqi if gas_ok else None,
+    }
 
-    climate = ClimateSensor(i2c)
-    gas = GasSensor(i2c)
 
-    print("\nStarting test read loop (press Ctrl+C to stop)...\n")
+async def main():
+    climate = None
+    gas = None
+    try:
+        i2c = busio.I2C(board.SCL, board.SDA)
+        climate = ClimateSensor(i2c)
+        gas = GasSensor(i2c)
+    except Exception as err:
+        print(f"[!] I2C init error: {err}")
 
-    sample_count = 0
+    # Set up as sensor node and wait for hub pair message
+    print("Waiting to pair with hub...")
+    hub_mac = await espnow_manager.init_sensor_node()
+    print(f"Paired with hub: {espnow_manager.mac_to_str(hub_mac)}")
+
     while True:
-        sample_count += 1
-        print(f"--- Reading #{sample_count} ---")
+        # Only reply to the UI hub when a request packet is received
+        message = await espnow_manager.read_message(hub_mac, timeout_ms=100)
+        if message:
+            sender_mac, data = message
+            print(f"Received from hub: {data}")
 
-        # Step 1: Read Climate Sensor
-        temp_f, humidity, climate_ok = climate.read_climate()
-        if climate_ok:
-            print(f"Climate  | Temp: {temp_f} °F | Humidity: {humidity} %RH")
-            calib_temp, calib_rh = temp_f, humidity
-        else:
-            print("Climate  | Reading Failed! Using fallback calibration (68°F, 50%RH)")
-            calib_temp, calib_rh = 68.0, 50.0
+            if espnow_manager.is_message_type(data, espnow_manager.REQUEST_MESSAGE):
+                sensor_data = _read_sensor_payload(climate, gas)
+                print(f"Sending sensor data to hub: {sensor_data}")
+                if not await espnow_manager.send_message(hub_mac, sensor_data):
+                    print("[!] Failed to send sensor data to hub")
 
-        # Step 2: Calibrate & Read Gas Sensor using climate data
-        tvoc, eco2, aqi, gas_ok = gas.calibrate_and_read(calib_temp, calib_rh)
-        if gas_ok:
-            print(f"Gas      | TVOC: {tvoc} ppb | eCO2: {eco2} ppm | AQI: {aqi}")
-        else:
-            print("Gas      | Reading Failed!")
+        await asyncio.sleep(0.05)
 
-        print("-" * 40)
-        time.sleep(3.0)
 
 if __name__ == "__main__":
-    main()
-
-
-
-
-
+    asyncio.run(main())
 
 
 # class ParticleSensor:
