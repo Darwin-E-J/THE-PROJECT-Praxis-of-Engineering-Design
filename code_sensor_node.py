@@ -11,8 +11,8 @@ import espnow
 
 # Hardware sensor drivers contained in CIRCUITPY/LIB/
 import adafruit_si7021
-import adafruit_pm25
 import adafruit_ens160
+from adafruit_pm25.i2c import PM25_I2C
 
 import asyncio
 import rtc
@@ -81,11 +81,40 @@ class GasSensor:
             return 0.0, 0.0, 0, False
 
 
-def _read_sensor_payload(climate: ClimateSensor | None, gas: GasSensor | None) -> dict:
+class ParticleSensor:
+    """Interfaces with PMSA003I Optical Particle Counter (0x12)"""
+
+    def __init__(self, i2c: busio.I2C, address: int = 0x12):
+        self.available = False
+        try:
+            self.sensor = PM25_I2C(i2c, reset_pin=None, address=address)
+            self.available = True
+            print(f"[+] Successfully initialized Particle Sensor (PMSA003I) at 0x12")
+        except Exception as err:
+            print(f"[!] Particle Sensor init error: {err}")
+
+    def read_particles(self) -> tuple[dict, bool]:
+        """Returns (pm_data_dict, success_flag)"""
+        if not self.available:
+            return {}, False
+        try:
+            reading = self.sensor.read()
+            return reading, True
+        except Exception as err:
+            print(f"[!] Particle Sensor read error: {err}")
+            return {}, False
+
+
+def _read_sensor_payload(
+    climate: ClimateSensor | None,
+    gas: GasSensor | None,
+    particle: ParticleSensor | None,
+) -> dict:
     """Read available sensors and return a compact JSON-serializable payload."""
     temp_f, humidity, climate_ok = climate.read_climate() if climate else (0.0, 0.0, False)
     calib_temp, calib_rh = (temp_f, humidity) if climate_ok else (68.0, 50.0)
     tvoc, eco2, aqi, gas_ok = gas.calibrate_and_read(calib_temp, calib_rh) if gas else (0.0, 0.0, 0, False)
+    pm_data, particle_ok = particle.read_particles() if particle else ({}, False)
 
     return {
         "type": "data",
@@ -94,16 +123,21 @@ def _read_sensor_payload(climate: ClimateSensor | None, gas: GasSensor | None) -
         "tvoc": tvoc if gas_ok else None,
         "eco2": eco2 if gas_ok else None,
         "aqi": aqi if gas_ok else None,
+        "pm1_0": float(pm_data.get("pm10 env", 0.0)) if particle_ok else None,
+        "pm2_5": float(pm_data.get("pm25 env", 0.0)) if particle_ok else None,
+        "pm10_0": float(pm_data.get("pm100 env", 0.0)) if particle_ok else None,
     }
 
 
 async def main():
     climate = None
     gas = None
+    particle = None
     try:
         i2c = busio.I2C(board.SCL, board.SDA)
         climate = ClimateSensor(i2c)
         gas = GasSensor(i2c)
+        particle = ParticleSensor(i2c)
     except Exception as err:
         print(f"[!] I2C init error: {err}")
 
@@ -120,7 +154,7 @@ async def main():
             print(f"Received from hub: {data}")
 
             if espnow_manager.is_message_type(data, espnow_manager.REQUEST_MESSAGE):
-                sensor_data = _read_sensor_payload(climate, gas)
+                sensor_data = _read_sensor_payload(climate, gas, particle)
                 print(f"Sending sensor data to hub: {sensor_data}")
                 if not await espnow_manager.send_message(hub_mac, sensor_data):
                     print("[!] Failed to send sensor data to hub")
@@ -131,14 +165,3 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-
-# class ParticleSensor:
-#     """Interfaces with PMSA003I Optical Particle Counter (0x12)"""
-#     def __init__(self, i2c:busio.I2C, address: int = 0x12):
-#         self.available = False
-#         try:
-#             self.sensor = PM
-        
-        
-# # Format into json
-# # Send with espnow manager
