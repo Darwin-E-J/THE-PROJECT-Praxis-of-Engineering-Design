@@ -2,19 +2,42 @@
 Circuitpython sketch for the UI hub that uses the WIfi_Manager, EspNowManager, and UI_Hub classes
 """
 
+import os
 import asyncio
 import rtc
 from wifi_manager import WifiManager
 from espnow_manager import ESPNowManager
+from ThingSpeak import ThingSpeak
 from UI_Hub import UIHub
 
-# List of sensor node MAC addresses to pair with (strings or bytes)
-# Supports :, -, or no delimiter seperated values
-SENSOR_MACS = ["28-37-2F-8C-B7-E8"]
+SENSOR_MAC_FIELD = 8
+THINGSPEAK_CHANNEL_ID = os.getenv("THINGSPEAK_CHANNEL_ID")
+THINGSPEAK_READ_API_KEY = os.getenv("THINGSPEAK_READ_API_KEY")
+THINGSPEAK_WRITE_API_KEY = os.getenv("THINGSPEAK_WRITE_API_KEY")
 
 wifi_manager = WifiManager()
 espnow_manager = ESPNowManager()
 myRTC = rtc.RTC()
+
+
+def get_sensor_macs(ts, field_id=SENSOR_MAC_FIELD):
+    """Pull field_id from ThingSpeak and return all unique non-None MAC addresses."""
+    data = ts.read_channel_field(field_id)
+    field_key = f"field{field_id}"
+    macs = []
+    seen = set()
+
+    for entry in data.get("feeds", []):
+        mac = entry.get(field_key)
+        if mac is not None:
+            mac = str(mac).strip()
+            normalized = mac.replace(":", "").replace("-", "").replace(" ", "").lower()
+            if mac and normalized not in seen:
+                seen.add(normalized)
+                macs.append(mac)
+
+    return macs
+
 
 if wifi_manager.connected:
     try:
@@ -22,6 +45,11 @@ if wifi_manager.connected:
         print("RTC synced with NTP time")
     except Exception as e:
         print("RTC Sync Error:", e)
+
+# Build peer MAC list from ThingSpeak field 8
+thingspeak = ThingSpeak(THINGSPEAK_READ_API_KEY, THINGSPEAK_WRITE_API_KEY, THINGSPEAK_CHANNEL_ID)
+SENSOR_MACS = get_sensor_macs(thingspeak)
+print(f"Loaded sensor MACs from ThingSpeak field {SENSOR_MAC_FIELD}: {SENSOR_MACS}")
 
 # Setup UIHub
 ui_hub = UIHub()

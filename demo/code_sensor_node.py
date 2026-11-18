@@ -32,8 +32,10 @@ async def main():
             if espnow_manager.is_message_type(data, espnow_manager.REQUEST_MESSAGE):
                 response = dict(SAMPLE_SENSOR_DATA)
                 print(f"Sending sample sensor data to hub: {response}")
-                if not await espnow_manager.send_message(hub_mac, response):
-                    print("[!] Failed to send sensor data to hub")
+                if await espnow_manager.send_message(hub_mac, response):
+                    print("Sensor data confirmed by hub\n")
+                else:
+                    print("[!] Failed to send sensor data to hub (no ACK)\n")
 
         await asyncio.sleep(0.05)
 

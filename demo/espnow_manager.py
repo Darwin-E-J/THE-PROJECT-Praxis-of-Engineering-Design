@@ -151,7 +151,6 @@ class ESPNowManager:
         while self._hub_mac is None:
             await asyncio.sleep(0.05)
 
-        print(f"Paired with Hub {self.mac_to_str(self._hub_mac)}")
         return self._hub_mac
 
     async def send_message(self, mac: str | bytes, message: dict) -> bool:
@@ -229,12 +228,13 @@ class ESPNowManager:
             await asyncio.sleep(0.01)
         return False
 
-    def _send_ack(self, mac_bytes: bytes, packet_id: int) -> None:
+    def _send_ack(self, mac_bytes: bytes, packet_id: int, packet_type: str = "packet") -> None:
         if mac_bytes not in self._peers:
             return
         ack = {self.PACKET_ID_KEY: packet_id, self.ACK_KEY: True}
         try:
             self._espnow.send(json.dumps(ack).encode("utf-8"), self._peers[mac_bytes])
+            print(f"[ACK] Sent ACK to {self.mac_to_str(mac_bytes)} for {packet_type} (id: {packet_id})")
         except Exception as e:
             print(f"[!] Failed to send ack: {e}")
 
@@ -249,8 +249,11 @@ class ESPNowManager:
             return None
 
         if data.get(self.ACK_KEY):
+            print(f"[ACK] Received ACK from {self.mac_to_str(mac)} confirming our packet (id: {packet_id})")
             self._acked_packets.add(packet_id)
             return None
+
+        pkt_type = data.get("type", "packet")
 
         if self.is_message_type(data, self.PAIR_MESSAGE):
             if self._auto_add_peers and self._hub_mac is None:
@@ -258,11 +261,11 @@ class ESPNowManager:
                 if mac in self._peers:
                     self._hub_mac = mac
                     self._auto_add_peers = False
-                    self._send_ack(mac, packet_id)
+                    self._send_ack(mac, packet_id, packet_type=pkt_type)
                     self._expected_packet[mac] = packet_id + 1
                 return None
             elif mac in self._peers:
-                self._send_ack(mac, packet_id)
+                self._send_ack(mac, packet_id, packet_type=pkt_type)
                 self._expected_packet[mac] = packet_id + 1
                 return None
             else:
@@ -271,7 +274,7 @@ class ESPNowManager:
         if mac not in self._peers:
             return None
 
-        self._send_ack(mac, packet_id)
+        self._send_ack(mac, packet_id, packet_type=pkt_type)
         expected = self._expected_packet.get(mac)
         peer_restarted = packet_id == 0 and expected != 1
 

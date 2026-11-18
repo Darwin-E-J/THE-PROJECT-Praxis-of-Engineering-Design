@@ -22,14 +22,15 @@ async def main():
             mac_str = espnow_manager.mac_to_str(mac)
             print(f"Requesting data from {mac_str}...")
             if await espnow_manager.send_message(mac, espnow_manager.REQUEST_MESSAGE):
+                print(f"Request confirmed by {mac_str}, waiting for data reply...")
                 reply = await espnow_manager.read_message(mac, timeout_ms=2000)
                 if reply:
                     sender_mac, data = reply
-                    print(f"Received from {espnow_manager.mac_to_str(sender_mac)}: {data}")
+                    print(f"Received from {espnow_manager.mac_to_str(sender_mac)}: {data}\n")
                 else:
-                    print(f"No response from {mac_str}")
+                    print(f"No response from {mac_str}\n")
             else:
-                print(f"Failed to send request to {mac_str}")
+                print(f"Failed to send request to {mac_str} (no ACK)\n")
 
         await asyncio.sleep(5)
 

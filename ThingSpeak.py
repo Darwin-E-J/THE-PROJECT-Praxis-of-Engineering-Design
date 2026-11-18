@@ -1,4 +1,12 @@
-import requests
+try:
+    import requests
+except ImportError:
+    import ssl
+    import wifi
+    import socketpool
+    import adafruit_requests
+    requests = None
+
 import json
 
 class ThingSpeak:
@@ -11,9 +19,14 @@ class ThingSpeak:
         self.channel_id = cID
 
         self.BASE_URL = "https://api.thingspeak.com"
+        self._session = (
+            requests
+            if requests is not None
+            else adafruit_requests.Session(socketpool.SocketPool(wifi.radio), ssl.create_default_context())
+        )
 
-        channel_fields_data = requests.get(f"{self.BASE_URL}/channels/{self.channel_id}/feeds.json?api_key={self.api_read}&results=2")
-        channel_fields = channel_fields_data.json() # Requests has a builtin json parser!
+        with self._session.get(f"{self.BASE_URL}/channels/{self.channel_id}/feeds.json?api_key={self.api_read}&results=2") as channel_fields_data:
+            channel_fields = channel_fields_data.json() # Requests has a builtin json parser!
 
         self.fields = {}
 
@@ -23,12 +36,16 @@ class ThingSpeak:
 
     # Managment
     def update_fields(self):
-        channel_fields_data = requests.get(f"{self.BASE_URL}/channels/{self.channel_id}/feeds.json?api_key={self.api_read}&results=2")
-        channel_fields = channel_fields_data.json()
+        with self._session.get(f"{self.BASE_URL}/channels/{self.channel_id}/feeds.json?api_key={self.api_read}&results=2") as channel_fields_data:
+            channel_fields = channel_fields_data.json()
 
         for key in channel_fields["channel"]:
             if key.startswith("field") and (key not in self.fields):
                 self.fields[channel_fields["channel"][key]] = key[-1]
+
+    def _validate_field_id(self, field_id):
+        if not isinstance(field_id, int) or isinstance(field_id, bool) or not (1 <= field_id <= 8):
+            raise ValueError("field_id must be an integer between 1 and 8")
 
     # ------------------------
     # FUNCTIONS TO READ DATA
@@ -58,14 +75,20 @@ class ThingSpeak:
         """
 
         # The api key is added to the parameters automatically
-        params["api_key"] = self.api_read
+        if self.api_read:
+            params["api_key"] = self.api_read
+
+        query = "&".join(f"{k}={str(v).replace(' ', '%20')}" for k, v in params.items() if v is not None)
 
         # Building the majority of the URL
         url = f"{self.BASE_URL}/channels/{self.channel_id}/{read_type}"
+        if query:
+            url = f"{url}?{query}"
 
         # Apparently requests has context managers, huge find
-        with requests.get(url, params=params) as response:
-            response.raise_for_status()
+        with self._session.get(url) as response:
+            if hasattr(response, "raise_for_status"):
+                response.raise_for_status()
             return response.json()
     
     """   
@@ -188,8 +211,9 @@ class ThingSpeak:
     def _write_request(self, params):
         url = f"{self.BASE_URL}/update"
 
-        with requests.post(url, data=params) as response:
-            response.raise_for_status()
+        with self._session.post(url, data=params) as response:
+            if hasattr(response, "raise_for_status"):
+                response.raise_for_status()
 
             result = response.text.strip()
 
