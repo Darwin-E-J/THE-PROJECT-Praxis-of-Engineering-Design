@@ -1,5 +1,8 @@
 """
-Simplified ESP-NOW Manager for fixed channel 0 operation without WiFi connection.
+Simplified ESP-NOW Manager for fixed channel 0 operation without a Wi-Fi connection.
+
+Used by the standalone demo sketches to test point-to-point pairing and
+ACK-confirmed JSON messaging between a UI hub and sensor node.
 """
 
 import json
@@ -18,13 +21,17 @@ except ImportError:
 
 
 class ESPNowManager:
+    """Manages fixed-channel ESP-NOW peers, pairing, and reliable packet delivery."""
+
+    # Packet framing and reliability settings
     PACKET_ID_KEY = "id"
     ACK_KEY = "ack"
     ACK_TIMEOUT_MS = 500
     MAX_RETRIES = 5
 
-    CHANNEL = 0
+    CHANNEL = 0  # Fixed channel 0 (uses current radio channel without Wi-Fi)
 
+    # Built-in protocol control messages
     PAIR_MESSAGE = {"type": "pair"}
     REQUEST_MESSAGE = {"type": "request"}
 
@@ -33,6 +40,7 @@ class ESPNowManager:
     MAX_INBOX = 20
 
     def __init__(self):
+        """Initialize ESP-NOW state, peer registry, and incoming message queue."""
         self._espnow = None
         self._packet_number = 0
         self._expected_packet = {}
@@ -45,10 +53,12 @@ class ESPNowManager:
 
     @property
     def hub_mac(self):
+        """Return the paired hub's 6-byte MAC address (sensor role), or None."""
         return self._hub_mac
 
     @staticmethod
     def mac_to_bytes(mac):
+        """Convert a MAC string (colon, dash, or space delimited) or bytes to 6-byte bytes."""
         if isinstance(mac, bytes):
             return mac
         mac = mac.replace(":", "").replace("-", "").replace(" ", "")
@@ -56,15 +66,18 @@ class ESPNowManager:
 
     @staticmethod
     def mac_to_str(mac_bytes):
+        """Format a 6-byte MAC address as a lowercase colon-separated hex string."""
         return ":".join(f"{b:02x}" for b in mac_bytes)
 
     @staticmethod
     def is_message_type(packet_data: dict, message_type: dict) -> bool:
+        """Return True if ``packet_data`` matches all key-value pairs in ``message_type``."""
         if not isinstance(packet_data, dict) or not isinstance(message_type, dict):
             return False
         return all(packet_data.get(k) == v for k, v in message_type.items())
 
     def start(self):
+        """Enable the Wi-Fi radio, initialize ESP-NOW, and launch the RX polling task."""
         if self._espnow is None:
             if not wifi.radio.enabled:
                 wifi.radio.enabled = True
@@ -74,6 +87,7 @@ class ESPNowManager:
             self._receive_task = asyncio.create_task(self.receive_messages())
 
     def stop(self):
+        """Cancel the background receive task and deinitialize ESP-NOW."""
         if self._receive_task:
             self._receive_task.cancel()
             self._receive_task = None
@@ -83,6 +97,7 @@ class ESPNowManager:
             print("[-] ESP-NOW stopped")
 
     def add_peer(self, mac, channel=CHANNEL):
+        """Register an ESP-NOW peer on ``channel`` if not already present."""
         mac_bytes = self.mac_to_bytes(mac)
         if mac_bytes in self._peers:
             return
@@ -95,6 +110,7 @@ class ESPNowManager:
             print(f"[!] Failed to add peer: {e}")
 
     def remove_peer(self, mac):
+        """Remove a registered ESP-NOW peer and clear its expected packet counter."""
         mac_bytes = self.mac_to_bytes(mac)
         if mac_bytes not in self._peers:
             return
@@ -108,8 +124,11 @@ class ESPNowManager:
 
     async def init_hub(self, sensor_macs: list, timeout_sec: int = 15) -> list:
         """
-        Adds configured sensor peers on channel 0 and sends PAIR_MESSAGE
-        until each sensor acknowledges or timeout expires.
+        Add configured sensor peers on channel 0 and send PAIR_MESSAGE
+        until each sensor acknowledges or ``timeout_sec`` expires.
+
+        Returns:
+            list: MAC addresses (bytes) of sensors that acknowledged pairing.
         """
         self.start()
         paired = []
@@ -140,8 +159,11 @@ class ESPNowManager:
 
     async def init_sensor_node(self) -> bytes:
         """
-        Waits on channel 0 for a PAIR_MESSAGE from the UI Hub, adds the hub
-        as a peer on channel 0, and acknowledges the pairing packet.
+        Wait on channel 0 for a PAIR_MESSAGE from the UI Hub, add the hub
+        as a peer on channel 0, and acknowledge the pairing packet.
+
+        Returns:
+            bytes: The paired hub's 6-byte MAC address.
         """
         self.start()
         self._auto_add_peers = True
@@ -154,6 +176,13 @@ class ESPNowManager:
         return self._hub_mac
 
     async def send_message(self, mac: str | bytes, message: dict) -> bool:
+        """
+        Send a JSON-encoded packet to ``mac`` and wait for an ACK, retrying
+        up to ``MAX_RETRIES`` times on timeout.
+
+        Returns:
+            bool: True if acknowledged by the peer, False otherwise.
+        """
         mac_bytes = self.mac_to_bytes(mac)
         if mac_bytes not in self._peers:
             return False
@@ -181,6 +210,13 @@ class ESPNowManager:
         return False
 
     async def read_message(self, mac: str | bytes | None = None, timeout_ms: int = 0) -> tuple | None:
+        """
+        Pop and return the next queued ``(sender_mac, data_dict)`` from the inbox.
+
+        Args:
+            mac: Optional sender MAC filter; accepts any peer if None.
+            timeout_ms: Maximum milliseconds to wait before returning None.
+        """
         mac_bytes = self.mac_to_bytes(mac) if mac is not None else None
         start = adafruit_ticks.ticks_ms()
 
@@ -194,7 +230,7 @@ class ESPNowManager:
             await asyncio.sleep(0.01)
 
     async def receive_messages(self):
-        """Continuously polls incoming ESP-NOW packets."""
+        """Continuously poll incoming ESP-NOW packets and enqueue valid messages."""
         while True:
             if self._espnow:
                 while self._espnow:
@@ -212,6 +248,7 @@ class ESPNowManager:
             await asyncio.sleep(0.01)
 
     def _add_packet_id(self, message: dict) -> dict:
+        """Wrap ``message`` with the current monotonically increasing packet ID."""
         packet = {self.PACKET_ID_KEY: self._packet_number}
         if isinstance(message, dict):
             packet.update(message)
@@ -220,6 +257,7 @@ class ESPNowManager:
         return packet
 
     async def _wait_for_ack(self, packet_id: int) -> bool:
+        """Wait up to ``ACK_TIMEOUT_MS`` for ``packet_id`` to be acknowledged."""
         start = adafruit_ticks.ticks_ms()
         while adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) < self.ACK_TIMEOUT_MS:
             if packet_id in self._acked_packets:
@@ -229,6 +267,7 @@ class ESPNowManager:
         return False
 
     def _send_ack(self, mac_bytes: bytes, packet_id: int, packet_type: str = "packet") -> None:
+        """Send an ACK packet for ``packet_id`` back to ``mac_bytes``."""
         if mac_bytes not in self._peers:
             return
         ack = {self.PACKET_ID_KEY: packet_id, self.ACK_KEY: True}
@@ -239,6 +278,10 @@ class ESPNowManager:
             print(f"[!] Failed to send ack: {e}")
 
     def _handle_packet(self, mac: bytes, msg: bytes) -> dict | None:
+        """
+        Decode an incoming packet, handle ACKs and PAIR_MESSAGE internally,
+        and return deduplicated application payloads from known peers.
+        """
         try:
             data = json.loads(msg.decode("utf-8"))
             packet_id = data[self.PACKET_ID_KEY]
@@ -248,6 +291,7 @@ class ESPNowManager:
         if not isinstance(packet_id, int) or isinstance(packet_id, bool):
             return None
 
+        # Record received ACKs for pending send_message() calls
         if data.get(self.ACK_KEY):
             print(f"[ACK] Received ACK from {self.mac_to_str(mac)} confirming our packet (id: {packet_id})")
             self._acked_packets.add(packet_id)
@@ -255,6 +299,7 @@ class ESPNowManager:
 
         pkt_type = data.get("type", "packet")
 
+        # Handle incoming PAIR_MESSAGE on sensor nodes
         if self.is_message_type(data, self.PAIR_MESSAGE):
             if self._auto_add_peers and self._hub_mac is None:
                 self.add_peer(mac, channel=self.CHANNEL)
@@ -271,11 +316,13 @@ class ESPNowManager:
             else:
                 return None
 
+        # Ignore application data from unknown peers
         if mac not in self._peers:
             return None
 
         self._send_ack(mac, packet_id, packet_type=pkt_type)
         expected = self._expected_packet.get(mac)
+        # Allow sequence number reset to 0 if the peer restarted
         peer_restarted = packet_id == 0 and expected != 1
 
         if expected is not None and not peer_restarted:

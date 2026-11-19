@@ -1,6 +1,8 @@
 """
-Simplified Sensor Node sketch for demoing ESP-NOW communication on channel 0 without WiFi.
-Replies to UI Hub request packets with a sample JSON dict of sensor data.
+Simplified Sensor Node sketch for demoing ESP-NOW communication on channel 0 without Wi-Fi.
+
+Waits to pair with the demo UI hub and replies to each incoming request packet
+with a static sample JSON dictionary of sensor measurements.
 """
 
 import asyncio
@@ -8,6 +10,7 @@ from espnow_manager import ESPNowManager
 
 espnow_manager = ESPNowManager()
 
+# Static mock sensor payload returned whenever the hub sends a REQUEST_MESSAGE
 SAMPLE_SENSOR_DATA = {
     "type": "data",
     "temp_f": 72.5,
@@ -19,11 +22,13 @@ SAMPLE_SENSOR_DATA = {
 
 
 async def main():
+    """Pair with the demo hub on channel 0 and respond to incoming data requests."""
     print("Waiting to pair with hub on channel 0...")
     hub_mac = await espnow_manager.init_sensor_node()
     print(f"Paired with hub: {espnow_manager.mac_to_str(hub_mac)}")
 
     while True:
+        # Poll inbox for requests from the paired hub
         message = await espnow_manager.read_message(hub_mac, timeout_ms=100)
         if message:
             sender_mac, data = message

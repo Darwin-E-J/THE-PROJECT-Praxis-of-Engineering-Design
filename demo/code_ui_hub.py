@@ -1,6 +1,8 @@
 """
-Simplified UI Hub sketch for demoing ESP-NOW communication on channel 0 without WiFi.
-Pairs with configured sensor nodes and periodically requests sample sensor data.
+Simplified UI Hub sketch for demoing ESP-NOW communication on channel 0 without Wi-Fi.
+
+Pairs with a static list of sensor node MAC addresses and periodically requests
+sample sensor readings every 5 seconds.
 """
 
 import asyncio
@@ -13,11 +15,13 @@ espnow_manager = ESPNowManager()
 
 
 async def main():
+    """Pair with configured demo sensor nodes and poll them every 5 seconds."""
     print("Initializing ESP-NOW hub on channel 0 (no WiFi)...")
     paired_sensors = await espnow_manager.init_hub(SENSOR_MACS)
     print(f"Paired sensors: {[espnow_manager.mac_to_str(m) for m in paired_sensors]}")
 
     while True:
+        # Poll each paired sensor node and print its response
         for mac in paired_sensors:
             mac_str = espnow_manager.mac_to_str(mac)
             print(f"Requesting data from {mac_str}...")

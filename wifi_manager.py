@@ -53,7 +53,9 @@ class WifiManager:
         Initialize WiFi connection and network services.
 
         Args:
-            verbose: If True, print available WiFi networks during scan
+            verbose: If True, print available WiFi networks during scan.
+            auto_connect: If True, immediately connect to WiFi on initialization.
+            DST: If True, apply +1 hour Daylight Saving Time offset to NTP time.
         """
         self._verbose = verbose
         self._connected = False
