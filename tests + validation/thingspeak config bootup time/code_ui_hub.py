@@ -5,7 +5,7 @@ Copy this file to the UI Hub's CIRCUITPY drive as ``code.py`` alongside
 ``wifi_manager.py``, ``ThingSpeak.py``, ``espnow_manager.py``, and
 ``settings.toml``. Measures the elapsed time from sketch start through Wi-Fi
 connection, NTP RTC sync, ThingSpeak sensor MAC config load, and ESP-NOW
-hub-sensor pairing.
+hub-sensor pairing, then outputs the results as CSV over serial.
 """
 
 import time
@@ -20,6 +20,11 @@ from ThingSpeak import ThingSpeak
 from espnow_manager import ESPNowManager
 
 SENSOR_MAC_FIELD = 8  # ThingSpeak field storing registered sensor MACs
+CSV_HEADER = (
+    "imports_s,wifi_connect_s,rtc_sync_s,thingspeak_config_s,"
+    "espnow_pair_s,total_s,wifi_connected,rtc_synced,"
+    "configured_macs,paired_count,all_paired,channel,paired_sensors"
+)
 
 t_imports = time.monotonic()
 
@@ -50,11 +55,13 @@ async def main():
 
     # 2. Sync RTC via NTP
     my_rtc = rtc.RTC()
+    rtc_synced = False
     if wifi_manager.connected:
         try:
             my_rtc.datetime = wifi_manager.utc_time
-        except Exception as err:
-            print(f"[!] RTC Sync Error: {err}")
+            rtc_synced = True
+        except Exception:
+            rtc_synced = False
     t_rtc = time.monotonic()
 
     # 3. Load configured sensor MACs from ThingSpeak
@@ -65,7 +72,6 @@ async def main():
     )
     sensor_macs = get_sensor_macs(thingspeak)
     t_thingspeak = time.monotonic()
-    print(f"Loaded {len(sensor_macs)} sensor MAC(s) from ThingSpeak field {SENSOR_MAC_FIELD}: {sensor_macs}")
 
     # 4. Pair with sensor node(s) over ESP-NOW
     espnow_manager = ESPNowManager()
@@ -73,22 +79,29 @@ async def main():
     t_paired = time.monotonic()
 
     ch = espnow_manager._channel
+    ch_str = "" if ch is None else ch
     paired_strs = [espnow_manager.mac_to_str(m) for m in paired_sensors]
     all_paired = len(sensor_macs) > 0 and len(paired_sensors) == len(sensor_macs)
 
-    print("\n--- Bootup to Pair Timing (UI Hub) ---")
-    print(f"Imports            : {t_imports - t_start:6.3f} s")
-    print(f"Wi-Fi connect      : {t_wifi - t_imports:6.3f} s")
-    print(f"RTC NTP sync       : {t_rtc - t_wifi:6.3f} s")
-    print(f"ThingSpeak config  : {t_thingspeak - t_rtc:6.3f} s ({len(sensor_macs)} MACs)")
-    print(f"ESP-NOW pairing    : {t_paired - t_thingspeak:6.3f} s ({len(paired_sensors)}/{len(sensor_macs)} paired on CH {ch})")
-    print("--------------------------------------")
-    print(f"TOTAL (start->pair): {t_paired - t_start:6.3f} s")
-    print(f"Paired sensors     : {paired_strs}")
-    if not all_paired:
-        print("[!] WARNING: Not all configured sensors paired before timeout.")
-
     espnow_manager.stop()
+
+    imports_s = t_imports - t_start
+    wifi_connect_s = t_wifi - t_imports
+    rtc_sync_s = t_rtc - t_wifi
+    thingspeak_config_s = t_thingspeak - t_rtc
+    espnow_pair_s = t_paired - t_thingspeak
+    total_s = t_paired - t_start
+
+    print("\n--- CSV START ---")
+    print(CSV_HEADER)
+    print(
+        f"{imports_s:.3f},{wifi_connect_s:.3f},{rtc_sync_s:.3f},"
+        f"{thingspeak_config_s:.3f},{espnow_pair_s:.3f},{total_s:.3f},"
+        f"{wifi_manager.connected},{rtc_synced},"
+        f"{len(sensor_macs)},{len(paired_sensors)},{all_paired},"
+        f"{ch_str},{';'.join(paired_strs)}"
+    )
+    print("--- CSV END ---")
 
 
 if __name__ == "__main__":

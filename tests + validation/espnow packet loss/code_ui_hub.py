@@ -3,8 +3,8 @@ ESP-NOW Per-Channel Ping-Pong Packet Loss Test — UI Hub.
 
 Copy this file to the UI Hub's CIRCUITPY drive as ``code.py`` alongside
 ``espnow_manager.py``. For each Wi-Fi channel (1-11), pairs with the Sensor
-Node, sends a user-specified number of single-shot ping-pong packets, prints
-packet loss, tunes to the next channel, and repeats.
+Node, sends a user-specified number of single-shot ping-pong packets, outputs
+packet loss as CSV over serial, tunes to the next channel, and repeats.
 """
 
 import asyncio
@@ -18,12 +18,23 @@ CHANNELS = tuple(range(ESPNowManager.MIN_CHANNEL, ESPNowManager.MAX_CHANNEL + 1)
 PAIR_TIMEOUT_SEC = 15
 PING_TIMEOUT_MS = 200
 PING_DELAY_SEC = 0.02
+CSV_HEADER = "channel,paired,sensor_mac,sent,received,lost,loss_pct"
 
 espnow_manager = ESPNowManager()
 
 
-async def test_channel(ch: int, next_ch, packet_count: int) -> tuple[int, int]:
-    """Tune to ``ch``, pair, run ``packet_count`` ping-pongs, and return ``(received, lost)``."""
+def format_csv_row(
+    ch: int, paired: bool, sensor_mac: str, sent: int, received: int, lost: int
+) -> str:
+    """Format a single channel test result as a CSV line."""
+    loss_pct = (lost / sent) * 100.0 if sent else 0.0
+    return f"{ch},{paired},{sensor_mac},{sent},{received},{lost},{loss_pct:.2f}"
+
+
+async def test_channel(
+    ch: int, next_ch, packet_count: int
+) -> tuple[bool, str, int, int]:
+    """Tune to ``ch``, pair, run ``packet_count`` ping-pongs, and return results."""
     # Reset peer state and tune radio to the target channel
     for mac in list(espnow_manager._peers):
         espnow_manager.remove_peer(mac)
@@ -36,10 +47,11 @@ async def test_channel(ch: int, next_ch, packet_count: int) -> tuple[int, int]:
     paired = await espnow_manager.init_hub([""], timeout_sec=PAIR_TIMEOUT_SEC)
 
     if not paired:
-        print(f"[CH {ch:2d}] Pair failed -> 0/{packet_count} received (100.0% packet loss)")
-        return 0, packet_count
+        print(format_csv_row(ch, False, "", packet_count, 0, packet_count))
+        return False, "", 0, packet_count
 
     sensor_mac = paired[0]
+    sensor_mac_str = espnow_manager.mac_to_str(sensor_mac)
 
     # Single-shot ping-pong (no retries) to measure actual packet loss
     espnow_manager.MAX_RETRIES = 0
@@ -55,15 +67,14 @@ async def test_channel(ch: int, next_ch, packet_count: int) -> tuple[int, int]:
         await asyncio.sleep(PING_DELAY_SEC)
 
     lost = packet_count - received
-    loss_pct = (lost / packet_count) * 100.0
-    print(f"[CH {ch:2d}] Received: {received}/{packet_count} | Lost: {lost} ({loss_pct:.1f}% packet loss)")
+    print(format_csv_row(ch, True, sensor_mac_str, packet_count, received, lost))
 
     # Tell sensor node to tune to the next channel
     espnow_manager.MAX_RETRIES = ESPNowManager.MAX_RETRIES
     espnow_manager.ACK_TIMEOUT_MS = ESPNowManager.ACK_TIMEOUT_MS
     await espnow_manager.send_message(sensor_mac, {"type": "next", "next_ch": next_ch})
 
-    return received, lost
+    return True, sensor_mac_str, received, lost
 
 
 async def main():
@@ -73,19 +84,21 @@ async def main():
         wifi.radio.enabled = True
 
     espnow_manager.start()
-    print(f"\nStarting ESP-NOW ping-pong test ({PACKET_COUNT} packets/channel, ch {CHANNELS[0]}-{CHANNELS[-1]})...\n")
+    print(CSV_HEADER)
 
     results = []
     for i, ch in enumerate(CHANNELS):
         next_ch = CHANNELS[i + 1] if i + 1 < len(CHANNELS) else None
-        received, lost = await test_channel(ch, next_ch, PACKET_COUNT)
-        results.append((ch, received, lost))
-
-    print("\n--- Packet Loss Summary ---")
-    for ch, received, lost in results:
-        print(f"CH {ch:2d}: {received:4d}/{PACKET_COUNT} received | {lost:4d} lost ({lost / PACKET_COUNT * 100:5.1f}%)")
+        paired, sensor_mac_str, received, lost = await test_channel(ch, next_ch, PACKET_COUNT)
+        results.append((ch, paired, sensor_mac_str, PACKET_COUNT, received, lost))
 
     espnow_manager.stop()
+
+    print("\n--- CSV START ---")
+    print(CSV_HEADER)
+    for row in results:
+        print(format_csv_row(*row))
+    print("--- CSV END ---")
 
 
 if __name__ == "__main__":
