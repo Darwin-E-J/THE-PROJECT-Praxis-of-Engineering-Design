@@ -56,7 +56,7 @@ async def test_channel(
     sensor_mac_str = espnow_manager.mac_to_str(sensor_mac)
 
     # Let pairing ACKs finish draining on both sides before starting pings
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.5)
 
     # Single-shot ping-pong (no retries) to measure actual packet loss
     espnow_manager.MAX_RETRIES = 0
