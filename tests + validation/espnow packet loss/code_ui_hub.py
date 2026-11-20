@@ -16,8 +16,8 @@ PACKET_COUNT = 1000
 
 CHANNELS = tuple(range(ESPNowManager.MIN_CHANNEL, ESPNowManager.MAX_CHANNEL + 1))
 PAIR_TIMEOUT_SEC = 15
-PING_TIMEOUT_MS = 200
-PING_DELAY_SEC = 0.04
+PING_TIMEOUT_MS = 250
+PING_DELAY_SEC = 0.05
 CSV_HEADER = "channel,paired,sensor_mac,sent,received,lost,loss_pct"
 
 espnow_manager = ESPNowManager()
@@ -56,7 +56,7 @@ async def test_channel(
     sensor_mac_str = espnow_manager.mac_to_str(sensor_mac)
 
     # Let pairing ACKs finish draining on both sides before starting pings
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.2)
 
     # Single-shot ping-pong (no retries) to measure actual packet loss
     espnow_manager.MAX_RETRIES = 0

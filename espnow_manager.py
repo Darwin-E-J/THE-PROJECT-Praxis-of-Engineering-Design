@@ -290,7 +290,7 @@ class ESPNowManager:
                     and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), round_start) < self.PAIR_SEND_INTERVAL_MS
                     and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start_time) < timeout_ms
                 ):
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.01)
         finally:
             self._accept_pair_responses = False
             self._expected_pair_count = 0
@@ -466,7 +466,7 @@ class ESPNowManager:
                     self._hub_mac is None
                     and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) < self.PAIR_CHANNEL_WAIT_MS
                 ):
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.01)
 
                 # Drain any late-arriving pair packet before hopping away from this channel.
                 if self._hub_mac is None:
@@ -576,7 +576,7 @@ class ESPNowManager:
 
             if adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) >= timeout_ms:
                 return None
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
 
     async def receive_messages(self):
         """Continuously drain incoming ESP-NOW packets at a 10ms poll interval."""
@@ -586,7 +586,7 @@ class ESPNowManager:
             except Exception as e:
                 print(f"[!] RX loop error: {e}")
             # Reduced sleep interval to fix ACK timeout lag
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
 
     def _add_packet_id(self, message: dict) -> dict:
         """Wrap ``message`` with the current monotonically increasing packet ID."""
@@ -604,7 +604,7 @@ class ESPNowManager:
             if packet_id in self._acked_packets:
                 self._acked_packets.remove(packet_id)
                 return True
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
         return False
 
     def _send_ack(self, mac_bytes: bytes, packet_id: int) -> None:
