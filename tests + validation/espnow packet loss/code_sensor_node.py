@@ -13,7 +13,7 @@ from espnow_manager import ESPNowManager
 
 HUB_TIMEOUT_MS = 4000  # Re-scan if hub goes silent (e.g. missed 'next' packet)
 PONG_ACK_TIMEOUT_MS = 200  # Allow enough margin for 10ms asyncio RX/ACK polling & GC
-PONG_DELAY_SEC = 0.02  # Space pong after ACK(ping) so hub drains RX buffer cleanly
+PONG_DELAY_SEC = 0.2  # Space pong after ACK(ping) so hub drains RX buffer cleanly
 CSV_HEADER = "channel,hub_mac,pings_received,pongs_acked,status"
 
 espnow_manager = ESPNowManager()
