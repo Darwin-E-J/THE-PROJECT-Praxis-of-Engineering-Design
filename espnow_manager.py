@@ -328,16 +328,17 @@ class ESPNowManager:
             return
         while self._espnow:
             packet = self._espnow.read()
-            if packet:
-                mac = packet.mac
-                msg = packet.msg
-                data = self._handle_packet(mac, msg)
+            if not packet:
+                break
+            mac = packet.mac
+            msg = packet.msg
+            data = self._handle_packet(mac, msg)
 
-                if data is not None:
-                    # Drop oldest unread message if inbox reaches capacity
-                    if len(self._inbox) >= self.MAX_INBOX:
-                        self._inbox.pop(0)
-                    self._inbox.append((mac, data))
+            if data is not None:
+                # Drop oldest unread message if inbox reaches capacity
+                if len(self._inbox) >= self.MAX_INBOX:
+                    self._inbox.pop(0)
+                self._inbox.append((mac, data))
 
     async def _send_successful_pair(self, mac_bytes: bytes) -> bool:
         """

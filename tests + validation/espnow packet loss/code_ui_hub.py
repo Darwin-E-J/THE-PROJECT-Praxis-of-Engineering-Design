@@ -17,7 +17,7 @@ PACKET_COUNT = 1000
 CHANNELS = tuple(range(ESPNowManager.MIN_CHANNEL, ESPNowManager.MAX_CHANNEL + 1))
 PAIR_TIMEOUT_SEC = 15
 PING_TIMEOUT_MS = 200
-PING_DELAY_SEC = 0.02
+PING_DELAY_SEC = 0.04
 CSV_HEADER = "channel,paired,sensor_mac,sent,received,lost,loss_pct"
 
 espnow_manager = ESPNowManager()
@@ -35,10 +35,12 @@ async def test_channel(
     ch: int, next_ch, packet_count: int
 ) -> tuple[bool, str, int, int]:
     """Tune to ``ch``, pair, run ``packet_count`` ping-pongs, and return results."""
-    # Reset peer state and tune radio to the target channel
+    # Stop RX task before tearing down ESP-NOW and tuning to the next channel
     for mac in list(espnow_manager._peers):
         espnow_manager.remove_peer(mac)
     espnow_manager._acked_packets.clear()
+    espnow_manager.stop()
+    await asyncio.sleep(0)
     espnow_manager._reset_espnow_on_channel(ch)
 
     # Pair with the sensor node using normal retries
@@ -60,6 +62,7 @@ async def test_channel(
     received = 0
     for seq in range(packet_count):
         espnow_manager._inbox.clear()
+        espnow_manager._acked_packets.clear()
         if await espnow_manager.send_message(sensor_mac, {"type": "ping", "seq": seq}):
             reply = await espnow_manager.read_message(sensor_mac, timeout_ms=PING_TIMEOUT_MS)
             if reply and reply[1].get("type") == "pong" and reply[1].get("seq") == seq:
@@ -83,7 +86,6 @@ async def main():
         wifi.radio.enabled = False
         wifi.radio.enabled = True
 
-    espnow_manager.start()
     print(CSV_HEADER)
 
     results = []

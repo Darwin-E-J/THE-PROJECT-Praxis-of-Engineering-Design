@@ -12,6 +12,7 @@ import wifi
 from espnow_manager import ESPNowManager
 
 HUB_TIMEOUT_MS = 4000  # Re-scan if hub goes silent (e.g. missed 'next' packet)
+PONG_ACK_TIMEOUT_MS = 200  # Allow enough margin for 10ms asyncio RX/ACK polling & GC
 CSV_HEADER = "channel,hub_mac,pings_received,pongs_acked,status"
 
 espnow_manager = ESPNowManager()
@@ -35,9 +36,11 @@ async def main():
         ch_str = "" if ch is None else ch
         hub_mac_str = espnow_manager.mac_to_str(hub_mac)
 
-        # Disable retries during ping-pong so real packet loss is measured
+        # Disable retries during ping-pong so real packet loss is measured, and
+        # prevent background in-place re-pairing from resetting ESP-NOW mid-test
         espnow_manager.MAX_RETRIES = 0
-        espnow_manager.ACK_TIMEOUT_MS = 50
+        espnow_manager.ACK_TIMEOUT_MS = PONG_ACK_TIMEOUT_MS
+        espnow_manager._sensor_paired = False
         pings_received = 0
         pongs_acked = 0
 
@@ -49,6 +52,7 @@ async def main():
 
                 if msg_type == "ping":
                     pings_received += 1
+                    espnow_manager._acked_packets.clear()
                     if await espnow_manager.send_message(
                         hub_mac, {"type": "pong", "seq": data.get("seq")}
                     ):
