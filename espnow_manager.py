@@ -32,6 +32,7 @@ class ESPNowManager:
     ACK_KEY = "ack"
     ACK_TIMEOUT_MS = 500
     MAX_RETRIES = 5
+    BUFFER_SIZE = 4096  # Larger RX ring buffer to avoid CircuitPython 'Invalid buffer' under bursts
 
     # Channel hopping and pairing timing parameters
     MIN_CHANNEL = 1
@@ -118,12 +119,19 @@ class ESPNowManager:
             return False
         return all(packet_data.get(k) == v for k, v in message_type.items())
 
+    def _create_espnow(self):
+        """Instantiate ESPNow with an expanded RX buffer when supported."""
+        try:
+            return espnow.ESPNow(buffer_size=self.BUFFER_SIZE)
+        except TypeError:
+            return espnow.ESPNow()
+
     def start(self):
         """Enable the Wi-Fi radio, initialize ESP-NOW, and launch the background RX task."""
         if self._espnow is None:
             if not wifi.radio.enabled:
                 wifi.radio.enabled = True
-            self._espnow = espnow.ESPNow()
+            self._espnow = self._create_espnow()
             print("[+] ESP-NOW subsystem started")
         if self._receive_task is None:
             self._receive_task = asyncio.create_task(self.receive_messages())
@@ -282,7 +290,7 @@ class ESPNowManager:
                     and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), round_start) < self.PAIR_SEND_INTERVAL_MS
                     and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start_time) < timeout_ms
                 ):
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0.1)
         finally:
             self._accept_pair_responses = False
             self._expected_pair_count = 0
@@ -385,7 +393,7 @@ class ESPNowManager:
 
         if self._set_channel(channel):
             self._channel = channel
-        self._espnow = espnow.ESPNow()
+        self._espnow = self._create_espnow()
 
         peer_channel = self._channel if self._channel is not None else None
         for mac_bytes, peer in list(self._peers.items()):
@@ -458,7 +466,7 @@ class ESPNowManager:
                     self._hub_mac is None
                     and adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) < self.PAIR_CHANNEL_WAIT_MS
                 ):
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0.1)
 
                 # Drain any late-arriving pair packet before hopping away from this channel.
                 if self._hub_mac is None:
@@ -568,7 +576,7 @@ class ESPNowManager:
 
             if adafruit_ticks.ticks_diff(adafruit_ticks.ticks_ms(), start) >= timeout_ms:
                 return None
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.1)
 
     async def receive_messages(self):
         """Continuously drain incoming ESP-NOW packets at a 10ms poll interval."""
@@ -578,7 +586,7 @@ class ESPNowManager:
             except Exception as e:
                 print(f"[!] RX loop error: {e}")
             # Reduced sleep interval to fix ACK timeout lag
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.1)
 
     def _add_packet_id(self, message: dict) -> dict:
         """Wrap ``message`` with the current monotonically increasing packet ID."""
@@ -596,7 +604,7 @@ class ESPNowManager:
             if packet_id in self._acked_packets:
                 self._acked_packets.remove(packet_id)
                 return True
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.1)
         return False
 
     def _send_ack(self, mac_bytes: bytes, packet_id: int) -> None:
